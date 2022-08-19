@@ -913,9 +913,8 @@ void SkinTheme::initWidget(Widget* widget)
       break;
 
     case kTextBoxWidget:
-      BORDER(4*guiscale());
       widget->setChildSpacing(0);
-      widget->setBgColor(colors.textboxFace());
+      widget->setStyle(styles.textboxText());
       break;
 
     case kViewWidget:
@@ -1430,8 +1429,7 @@ void SkinTheme::paintTextBox(ui::PaintEvent& ev)
   Graphics* g = ev.graphics();
   Widget* widget = static_cast<Widget*>(ev.getSource());
 
-  Theme::drawTextBox(g, widget, nullptr, nullptr,
-                     BGCOLOR, colors.textboxText());
+  Theme::paintTextBoxWithStyle(g, widget);
 }
 
 void SkinTheme::paintViewViewport(PaintEvent& ev)
