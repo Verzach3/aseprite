@@ -1,5 +1,5 @@
 # Aseprite
-# Copyright (C) 2018-2022  Igara Studio S.A.
+# Copyright (C) 2018-2024  Igara Studio S.A.
 # Copyright (C) 2001-2018  David Capello
 
 cmake_minimum_required(VERSION 3.16)
@@ -8,15 +8,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF) # We use -std=c++17 instead of -std=gnu++17 in macOS
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-
-if(COMMAND cmake_policy)
-  # CMP0003: Libraries linked via full path no longer produce linker search paths.
-  #cmake_policy(SET CMP0003 NEW)
-  if(CMAKE_MAJOR_VERSION GREATER 2)
-    # CMP0046: Old behavior to silently ignore non-existent dependencies.
-    cmake_policy(SET CMP0046 OLD)
-  endif()
-endif()
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
@@ -65,6 +56,7 @@ option(ENABLE_WEBSOCKET    "Compile with websocket support" on)
 option(ENABLE_TESTS        "Compile unit tests" off)
 option(ENABLE_BENCHMARKS   "Compile benchmarks" off)
 option(ENABLE_TRIAL_MODE   "Compile the trial version" off)
+option(ENABLE_DRM          "Compile the DRM-enabled version (e.g. for automatic updates)" off)
 option(ENABLE_STEAM        "Compile with Steam library" off)
 option(ENABLE_DEVMODE      "Compile vesion for developers" off)
 option(ENABLE_UI           "Compile UI (turn off to compile CLI-only version)" on)
@@ -73,6 +65,7 @@ option(ENABLE_CLANG_TIDY   "Enable static analysis" off)
 option(ENABLE_CCACHE       "Use CCache to improve recompilation speed (optional)" on)
 option(ENABLE_SENTRY       "Use Sentry SDK to report crashes" off)
 option(ENABLE_WEBP         "Enable support to load/save .webp files" on)
+option(ENABLE_PSD          "Enable experimental support for .psd files" off)
 option(ENABLE_DESKTOP_INTEGRATION  "Enable desktop integration modules" off)
 option(ENABLE_QT_THUMBNAILER       "Enable kde5/qt5 thumnailer" off)
 set(CUSTOM_WEBSITE_URL "" CACHE STRING "Enable custom local webserver to check updates")
@@ -83,10 +76,20 @@ if(ENABLE_SENTRY)
   set(SENTRY_ENV "development" CACHE STRING "Sentry environment (production, testing, development, etc.)")
 endif()
 
-if(ENABLE_NEWS OR ENABLE_UPDATER)
+if(ENABLE_NEWS OR ENABLE_UPDATER OR ENABLE_DRM)
   set(REQUIRE_CURL ON)
 else()
   set(REQUIRE_CURL OFF)
+endif()
+
+# Select libcurl's TLS backend according to target platform
+if(REQUIRE_CURL AND ENABLE_DRM)
+  if(APPLE)
+    option(CMAKE_USE_SECTRANSP "enable Apple OS native SSL/TLS" ON)
+  endif()
+  if(WIN32)
+    set(CMAKE_USE_SCHANNEL "enable Windows native SSL/TLS" ON)
+  endif()
 endif()
 
 if(NOT LAF_OS_BACKEND)
@@ -97,14 +100,8 @@ if(NOT LAF_OS_BACKEND)
   endif()
 endif()
 
-# Check valid gtk + libpng combination
-if(LAF_OS_WITH_GTK)
-  if(NOT USE_SHARED_LIBPNG)
-    message(FATAL_ERROR "Cannot compile with gtk and static libpng, set USE_SHARED_LIBPNG=ON")
-  endif()
-  if(NOT USE_SHARED_HARFBUZZ)
-    message(FATAL_ERROR "Cannot compile with gtk and static HarfBuzz, set USE_SHARED_HARFBUZZ=ON")
-  endif()
+if(ENABLE_DRM AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/drm/CMakeLists.txt)
+  message(FATAL_ERROR "Your Aseprite repository is incomplete, clone the drm repository")
 endif()
 
 ######################################################################
@@ -166,7 +163,7 @@ set(PIXMAN_DIR          ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pixman)
 set(FREETYPE_DIR        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/freetype2)
 set(HARFBUZZ_DIR        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/harfbuzz)
 set(SIMPLEINI_DIR       ${CMAKE_CURRENT_SOURCE_DIR}/third_party/simpleini)
-set(TINYXML_DIR         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinyxml)
+set(TINYXML_DIR         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinyxml2)
 set(ZLIB_DIR            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib)
 
 # Search in the "cmake" directory for additional CMake modules.
@@ -228,12 +225,12 @@ endif()
 include_directories(${PNG_INCLUDE_DIRS})
 add_definitions(-DPNG_NO_MMX_CODE) # Do not use MMX optimizations in PNG code
 
-# tinyxml
+# tinyxml2
 if(USE_SHARED_TINYXML)
-  find_library(TINYXML_LIBRARY NAMES tinyxml)
-  find_path(TINYXML_INCLUDE_DIR NAMES tinyxml.h)
+  find_library(TINYXML_LIBRARY NAMES tinyxml2)
+  find_path(TINYXML_INCLUDE_DIR NAMES tinyxml2.h)
 else()
-  set(TINYXML_LIBRARY tinyxml)
+  set(TINYXML_LIBRARY tinyxml2)
   set(TINYXML_INCLUDE_DIR ${TINYXML_DIR})
 endif()
 include_directories(${TINYXML_INCLUDE_DIR})
@@ -296,7 +293,7 @@ if(USE_SHARED_CMARK)
   find_path(CMARK_INCLUDE_DIRS NAMES cmark.h)
 else()
   add_definitions(-DCMARK_STATIC_DEFINE)
-  set(CMARK_LIBRARIES cmark_static)
+  set(CMARK_LIBRARIES cmark)
 endif()
 
 if(REQUIRE_CURL)
@@ -324,6 +321,9 @@ endif()
 set(LAF_WITH_TESTS ${ENABLE_TESTS} CACHE BOOL "Enable LAF tests")
 set(UNDO_TESTS     ${ENABLE_TESTS} CACHE BOOL "Enable undo tests")
 
+if(ENABLE_DRM)
+  add_subdirectory(drm)
+endif()
 add_subdirectory(laf)
 
 # libwebp

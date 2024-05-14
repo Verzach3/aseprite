@@ -14,7 +14,6 @@
 #include "app/console.h"
 #include "app/context.h"
 #include "app/file_selector.h"
-#include "app/modules/editors.h"
 #include "app/pref/preferences.h"
 #include "app/ui/drop_down_button.h"
 #include "app/ui/editor/editor.h"
@@ -28,7 +27,7 @@
 #include "render/dithering.h"
 #include "render/ordered_dither.h"
 #include "render/quantization.h"
-#include "ui/system.h"
+#include "ui/manager.h"
 
 #include "paste_text.xml.h"
 
@@ -123,10 +122,7 @@ private:
     }
 
     if (!m_fontPopup->isVisible()) {
-      gfx::Rect bounds = fontFace()->bounds();
-      m_fontPopup->showPopup(
-        gfx::Rect(bounds.x, bounds.y+bounds.h,
-                  ui::display_w()/2, ui::display_h()/2));
+      m_fontPopup->showPopup(display(), fontFace()->bounds());
     }
     else {
       m_fontPopup->closeWindow(NULL);
@@ -143,8 +139,8 @@ private:
 
 void PasteTextCommand::onExecute(Context* ctx)
 {
-  Editor* editor = current_editor;
-  if (editor == NULL)
+  auto editor = Editor::activeEditor();
+  if (editor == nullptr)
     return;
 
   Preferences& pref = Preferences::instance();

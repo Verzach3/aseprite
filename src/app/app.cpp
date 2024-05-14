@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -22,6 +22,7 @@
 #include "app/commands/commands.h"
 #include "app/console.h"
 #include "app/crash/data_recovery.h"
+#include "app/drm.h"
 #include "app/extensions.h"
 #include "app/file/file.h"
 #include "app/file/file_formats_manager.h"
@@ -56,7 +57,8 @@
 #include "app/util/clipboard.h"
 #include "base/exception.h"
 #include "base/fs.h"
-#include "base/scoped_lock.h"
+#include "base/platform.h"
+#include "base/replace_string.h"
 #include "base/split_string.h"
 #include "doc/sprite.h"
 #include "fmt/format.h"
@@ -67,6 +69,7 @@
 #include "render/render.h"
 #include "ui/intern.h"
 #include "ui/ui.h"
+#include "updater/user_agent.h"
 #include "ver/info.h"
 
 #if LAF_MACOS
@@ -148,7 +151,7 @@ public:
 #ifdef ENABLE_UI
   RecentFiles m_recent_files;
   InputChain m_inputChain;
-  clipboard::ClipboardManager m_clipboardManager;
+  Clipboard m_clipboard;
 #endif
 #ifdef ENABLE_DATA_RECOVERY
   // This is a raw pointer because we want to delete it explicitly.
@@ -188,6 +191,13 @@ public:
 
   void createDataRecovery(Context* ctx) {
 #ifdef ENABLE_DATA_RECOVERY
+
+#ifdef ENABLE_TRIAL_MODE
+    DRM_INVALID{
+      return;
+    }
+#endif
+
     m_recovery = std::make_unique<app::crash::DataRecovery>(ctx);
     m_recovery->SessionsListIsReady.connect(
       [] {
@@ -203,6 +213,13 @@ public:
 
   void searchDataRecoverySessions() {
 #ifdef ENABLE_DATA_RECOVERY
+
+#ifdef ENABLE_TRIAL_MODE
+    DRM_INVALID{
+      return;
+    }
+#endif
+
     ASSERT(m_recovery);
     if (m_recovery)
       m_recovery->launchSearch();
@@ -211,6 +228,13 @@ public:
 
   void deleteDataRecovery() {
 #ifdef ENABLE_DATA_RECOVERY
+
+#ifdef ENABLE_TRIAL_MODE
+    DRM_INVALID{
+      return;
+    }
+#endif
+
     m_recovery.reset();
 #endif
   }
@@ -243,9 +267,19 @@ int App::initialize(const AppOptions& options)
 
 #ifdef ENABLE_UI
   m_isGui = options.startUI() && !options.previewCLI();
+
+  // Notify the scripting engine that we're going to enter to GUI
+  // mode, this is useful so we can mark the stdin file handle as
+  // closed so no script can hang the program if it tries to read from
+  // stdin when the GUI is running.
+  #ifdef ENABLE_SCRIPTING
+    if (m_isGui)
+      m_engine->notifyRunningGui();
+  #endif
 #else
   m_isGui = false;
 #endif
+
   m_isShell = options.startShell();
   m_coreModules = std::make_unique<CoreModules>();
 
@@ -299,6 +333,16 @@ int App::initialize(const AppOptions& options)
 
   initialize_color_spaces(preferences());
 
+#ifdef ENABLE_DRM
+  LOG("APP: Initializing DRM...\n");
+  app_configure_drm();
+#endif
+
+#ifdef ENABLE_STEAM
+  if (options.noInApp())
+    m_inAppSteam = false;
+#endif
+
   // Load modules
   m_modules = std::make_unique<Modules>(createLogInDesktop, preferences());
   m_legacy = std::make_unique<LegacyModules>(isGui() ? REQUIRE_INTERFACE: 0);
@@ -324,7 +368,7 @@ int App::initialize(const AppOptions& options)
 
     // Set the ClipboardDelegate impl to copy/paste text in the native
     // clipboard from the ui::Entry control.
-    m_uiSystem->setClipboardDelegate(&m_modules->m_clipboardManager);
+    m_uiSystem->setClipboardDelegate(&m_modules->m_clipboard);
 
     // Setup the GUI cursor and redraw screen
     ui::set_use_native_cursors(preferences().cursor.useNativeCursor());
@@ -336,6 +380,7 @@ int App::initialize(const AppOptions& options)
 
     // Create the main window.
     m_mainWindow.reset(new MainWindow);
+    m_mainWindow->initialize();
     if (m_mod)
       m_mod->modMainWindow(m_mainWindow.get());
 
@@ -447,7 +492,7 @@ void App::run()
     auto manager = ui::Manager::getDefault();
 #if LAF_WINDOWS
     // How to interpret one finger on Windows tablets.
-    manager->display()
+    manager->display()->nativeWindow()
       ->setInterpretOneFingerGestureAsMouseMovement(
         preferences().experimental.oneFingerAsMouseMovement());
 #endif
@@ -455,7 +500,7 @@ void App::run()
 #if LAF_LINUX
     // Setup app icon for Linux window managers
     try {
-      os::Window* display = os::instance()->defaultWindow();
+      os::Window* window = os::instance()->defaultWindow();
       os::SurfaceList icons;
 
       for (const int size : { 32, 64, 128 }) {
@@ -470,7 +515,7 @@ void App::run()
         }
       }
 
-      display->setIcons(icons);
+      window->setIcons(icons);
     }
     catch (const std::exception&) {
       // Just ignore the exception, we couldn't change the app icon, no
@@ -480,9 +525,18 @@ void App::run()
 
     // Initialize Steam API
 #ifdef ENABLE_STEAM
-    steam::SteamAPI steam;
-    if (steam.initialized())
-      os::instance()->activateApp();
+    std::unique_ptr<steam::SteamAPI> steam;
+    if (m_inAppSteam) {
+      steam = std::make_unique<steam::SteamAPI>();
+      if (steam->isInitialized())
+        os::instance()->activateApp();
+    }
+    else {
+      // We tried to load the Steam SDK without calling
+      // SteamAPI_InitSafe() to check if we could run the program
+      // without "in game" indication but still capturing screenshots
+      // on Steam, and that wasn't the case.
+    }
 #endif
 
 #if defined(_DEBUG) || defined(ENABLE_DEVMODE)
@@ -541,8 +595,15 @@ void App::run()
   extensions().executeExitActions();
 #endif
 
+  close();
+}
+
+void App::close()
+{
 #ifdef ENABLE_UI
   if (isGui()) {
+    ExitGui();
+
     // Select no document
     static_cast<UIContext*>(context())->setActiveView(nullptr);
 
@@ -669,24 +730,21 @@ Workspace* App::workspace() const
 {
   if (m_mainWindow)
     return m_mainWindow->getWorkspace();
-  else
-    return nullptr;
+  return nullptr;
 }
 
 ContextBar* App::contextBar() const
 {
   if (m_mainWindow)
     return m_mainWindow->getContextBar();
-  else
-    return nullptr;
+  return nullptr;
 }
 
 Timeline* App::timeline() const
 {
   if (m_mainWindow)
     return m_mainWindow->getTimeline();
-  else
-    return nullptr;
+  return nullptr;
 }
 
 Preferences& App::preferences() const
@@ -727,13 +785,42 @@ void App::showBackupNotification(bool state)
 
 void App::updateDisplayTitleBar()
 {
-  std::string defaultTitle = fmt::format("{} v{}", get_app_name(), get_app_version());
+  static std::string defaultTitle;
   std::string title;
+
+  if (defaultTitle.empty()) {
+    defaultTitle = fmt::format("{} v{}", get_app_name(), get_app_version());
+
+#if LAF_MACOS
+    // On macOS we remove the "-arm64" suffix for Apple Silicon as it
+    // will be the most common platform from now on.
+    if constexpr (base::Platform::arch == base::Platform::Arch::arm64) {
+      base::replace_string(defaultTitle, "-arm64", "");
+    }
+    else if constexpr (base::Platform::arch == base::Platform::Arch::x64) {
+      base::replace_string(defaultTitle, "-x64", "");
+      defaultTitle += " (x64)";
+    }
+#else
+    // On PC (Windows/Linux) we try to remove "-x64" suffix as it's
+    // the most common platform.
+    if constexpr (base::Platform::arch == base::Platform::Arch::x64) {
+      base::replace_string(defaultTitle, "-x64", "");
+    }
+    else if constexpr (base::Platform::arch == base::Platform::Arch::x86) {
+      base::replace_string(defaultTitle, "-x86", "");
+      defaultTitle += " (x86)";
+    }
+#endif
+  }
 
   DocView* docView = UIContext::instance()->activeView();
   if (docView) {
     // Prepend the document's filename.
     title += docView->document()->name();
+    if (docView->document()->isReadOnly()) {
+      title += " [Read-Only]";
+    }
     title += " - ";
   }
 
@@ -786,8 +873,7 @@ PixelFormat app_get_current_pixel_format()
   Doc* doc = ctx->activeDocument();
   if (doc)
     return doc->sprite()->pixelFormat();
-  else
-    return IMAGE_RGB;
+  return IMAGE_RGB;
 }
 
 int app_get_color_to_clear_layer(Layer* layer)
@@ -810,5 +896,17 @@ int app_get_color_to_clear_layer(Layer* layer)
 
   return color_utils::color_for_layer(color, layer);
 }
+
+#ifdef ENABLE_DRM
+void app_configure_drm() {
+  ResourceFinder userDirRf, dataDirRf;
+  userDirRf.includeUserDir("");
+  dataDirRf.includeDataDir("");
+  std::map<std::string, std::string> config = {
+    {"data", dataDirRf.getFirstOrCreateDefault()}
+  };
+  DRM_CONFIGURE(get_app_url(), get_app_name(), get_app_version(), userDirRf.getFirstOrCreateDefault(), updater::getUserAgent(), config);
+}
+#endif
 
 } // namespace app

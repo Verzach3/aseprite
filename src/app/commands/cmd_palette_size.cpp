@@ -29,6 +29,7 @@ public:
 
 protected:
   void onLoadParams(const Params& params) override;
+  bool onEnabled(Context* context) override;
   void onExecute(Context* context) override;
 
 private:
@@ -44,6 +45,11 @@ PaletteSizeCommand::PaletteSizeCommand()
 void PaletteSizeCommand::onLoadParams(const Params& params)
 {
   m_size = params.get_as<int>("size");
+}
+
+bool PaletteSizeCommand::onEnabled(Context* context)
+{
+  return context->checkFlags(ContextFlags::ActiveDocumentIsWritable);
 }
 
 void PaletteSizeCommand::onExecute(Context* context)
@@ -72,7 +78,7 @@ void PaletteSizeCommand::onExecute(Context* context)
   palette.resize(std::clamp(ncolors, 1, std::numeric_limits<int>::max()));
 
   ContextWriter writer(reader);
-  Tx tx(context, "Palette Size", ModifyDocument);
+  Tx tx(writer, "Palette Size", ModifyDocument);
   tx(new cmd::SetPalette(writer.sprite(), frame, &palette));
   tx.commit();
 }

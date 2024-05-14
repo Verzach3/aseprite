@@ -44,11 +44,15 @@ void DeselectMaskCommand::onExecute(Context* context)
   ContextWriter writer(context);
   Doc* document(writer.document());
   {
-    Tx tx(writer.context(), "Deselect", DoesntModifyDocument);
+    Tx tx(writer, "Deselect", DoesntModifyDocument);
     tx(new cmd::DeselectMask(document));
     tx.commit();
   }
-  update_screen_for_document(document);
+
+#ifdef ENABLE_UI
+  if (context->isUIAvailable())
+    update_screen_for_document(document);
+#endif
 }
 
 Command* CommandFactory::createDeselectMaskCommand()

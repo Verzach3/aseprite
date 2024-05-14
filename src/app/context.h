@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2023  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -30,6 +30,7 @@ namespace doc {
 
 namespace app {
   class ActiveSiteHandler;
+  class Clipboard;
   class Command;
   class Doc;
   class DocRange;
@@ -62,11 +63,15 @@ namespace app {
 
   class CommandExecutionEvent {
   public:
-    CommandExecutionEvent(Command* command)
-      : m_command(command), m_canceled(false) {
+    CommandExecutionEvent(Command* command,
+                          const Params& params)
+      : m_command(command)
+      , m_params(params)
+      , m_canceled(false) {
     }
 
     Command* command() const { return m_command; }
+    const Params& params() const { return m_params; }
 
     // True if the command was canceled or simulated by an
     // observer/signal slot.
@@ -77,6 +82,7 @@ namespace app {
 
   private:
     Command* m_command;
+    const Params& m_params;
     bool m_canceled;
   };
 
@@ -90,6 +96,7 @@ namespace app {
     Docs& documents() { return m_docs; }
 
     Preferences& preferences() const;
+    Clipboard* clipboard() const;
 
     virtual bool isUIAvailable() const     { return false; }
     virtual bool isRecordingMacro() const  { return false; }
@@ -109,6 +116,7 @@ namespace app {
     void setActiveFrame(doc::frame_t frame);
     void setRange(const DocRange& range);
     void setSelectedColors(const doc::PalettePicks& picks);
+    void setSelectedTiles(const doc::PalettePicks& picks);
     bool hasModifiedDocuments() const;
     void notifyActiveSiteChanged();
 
@@ -136,6 +144,7 @@ namespace app {
     virtual void onSetActiveFrame(const doc::frame_t frame);
     virtual void onSetRange(const DocRange& range);
     virtual void onSetSelectedColors(const doc::PalettePicks& picks);
+    virtual void onSetSelectedTiles(const doc::PalettePicks& picks);
     virtual void onCloseDocument(Doc* doc);
 
     Doc* lastSelectedDoc() { return m_lastSelectedDoc; }

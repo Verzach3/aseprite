@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -86,6 +86,7 @@ namespace app {
     // scripts.
     int initialize(const AppOptions& options);
     void run();
+    void close();
 
     AppMod* mod() const { return m_mod; }
     tools::ToolBox* toolBox() const;
@@ -122,6 +123,7 @@ namespace app {
 
     // App Signals
     obs::signal<void()> Exit;
+    obs::signal<void()> ExitGui;
     obs::signal<void()> PaletteChange;
     obs::signal<void()> ColorSpaceChange;
     obs::signal<void()> PalettePresetsChange;
@@ -140,6 +142,9 @@ namespace app {
     std::unique_ptr<LegacyModules> m_legacy;
     bool m_isGui;
     bool m_isShell;
+#ifdef ENABLE_STEAM
+    bool m_inAppSteam = true;
+#endif
     std::unique_ptr<MainWindow> m_mainWindow;
     base::paths m_files;
 #ifdef ENABLE_UI
@@ -159,6 +164,7 @@ namespace app {
   void app_rebuild_documents_tabs();
   PixelFormat app_get_current_pixel_format();
   int app_get_color_to_clear_layer(doc::Layer* layer);
+  void app_configure_drm();
 
 } // namespace app
 

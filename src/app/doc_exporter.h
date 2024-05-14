@@ -14,6 +14,7 @@
 #include "base/disable_copying.h"
 #include "base/task.h"
 #include "doc/frame.h"
+#include "doc/image_ref.h"
 #include "doc/image_buffer.h"
 #include "doc/object_id.h"
 #include "doc/object_version.h"
@@ -21,6 +22,7 @@
 #include "gfx/rect.h"
 
 #include <iosfwd>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,6 +52,7 @@ namespace app {
     const std::string& textureFilename() { return m_textureFilename; }
     SpriteSheetType spriteSheetType() { return m_sheetType; }
     const std::string& filenameFormat() const { return m_filenameFormat; }
+    const std::string& tagnameFormat() const { return m_tagnameFormat; }
 
     void setDataFormat(SpriteSheetDataFormat format) { m_dataFormat = format; }
     void setDataFilename(const std::string& filename) { m_dataFilename = filename; }
@@ -69,25 +72,29 @@ namespace app {
     void setTrimByGrid(bool trimByGrid) { m_trimByGrid = trimByGrid; }
     void setExtrude(bool extrude) { m_extrude = extrude; }
     void setFilenameFormat(const std::string& format) { m_filenameFormat = format; }
+    void setTagnameFormat(const std::string& format) { m_tagnameFormat = format; }
     void setSplitLayers(bool splitLayers) { m_splitLayers = splitLayers; }
     void setSplitTags(bool splitTags) { m_splitTags = splitTags; }
     void setListTags(bool value) { m_listTags = value; }
     void setListLayers(bool value) { m_listLayers = value; }
     void setListSlices(bool value) { m_listSlices = value; }
 
-    void addDocument(
+    void addImage(
       Doc* doc,
-      const doc::Tag* tag,
-      const doc::SelectedLayers* selLayers,
-      const doc::SelectedFrames* selFrames);
+      const doc::ImageRef& image);
 
     int addDocumentSamples(
       Doc* doc,
       const doc::Tag* tag,
       const bool splitLayers,
       const bool splitTags,
+      const bool splitGrid,
       const doc::SelectedLayers* selLayers,
       const doc::SelectedFrames* selFrames);
+
+    int addTilesetsSamples(
+      Doc* doc,
+      const doc::SelectedLayers* selLayers);
 
     Doc* exportSheet(Context* ctx, base::task_token& token);
     gfx::Size calculateSheetSize();
@@ -99,6 +106,12 @@ namespace app {
     class SimpleLayoutSamples;
     class BestFitLayoutSamples;
 
+    void addDocument(
+      Doc* doc,
+      const doc::Tag* tag,
+      const doc::SelectedLayers* selLayers,
+      const doc::SelectedFrames* selFrames,
+      const bool splitGrid);
     void captureSamples(Samples& samples,
                         base::task_token& token);
     void layoutSamples(Samples& samples,
@@ -116,15 +129,20 @@ namespace app {
 
     class Item {
     public:
-      Doc* doc;
-      const doc::Tag* tag;
-      doc::SelectedLayers* selLayers;
-      doc::SelectedFrames* selFrames;
+      Doc* doc = nullptr;
+      const doc::Tag* tag = nullptr;
+      std::unique_ptr<doc::SelectedLayers> selLayers;
+      std::unique_ptr<doc::SelectedFrames> selFrames;
+      bool splitGrid = false;
+      doc::ImageRef image;
 
       Item(Doc* doc,
            const doc::Tag* tag,
            const doc::SelectedLayers* selLayers,
-           const doc::SelectedFrames* selFrames);
+           const doc::SelectedFrames* selFrames,
+           const bool splitGrid);
+      Item(Doc* doc,
+           const doc::ImageRef& image);
       Item(Item&& other);
       ~Item();
 
@@ -134,6 +152,8 @@ namespace app {
 
       int frames() const;
       doc::SelectedFrames getSelectedFrames() const;
+
+      bool isOneImageOnly() const { return image != nullptr; }
     };
     typedef std::vector<Item> Items;
 
@@ -142,6 +162,7 @@ namespace app {
     std::string m_dataFilename;
     std::string m_textureFilename;
     std::string m_filenameFormat;
+    std::string m_tagnameFormat;
     int m_textureWidth;
     int m_textureHeight;
     int m_textureColumns;

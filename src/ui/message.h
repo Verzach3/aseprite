@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2023  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -18,8 +18,11 @@
 #include "ui/mouse_button.h"
 #include "ui/pointer_type.h"
 
+#include <functional>
+
 namespace ui {
 
+  class Display;
   class Timer;
   class Widget;
 
@@ -35,6 +38,7 @@ namespace ui {
     virtual ~Message();
 
     MessageType type() const { return m_type; }
+    Display* display() const { return m_display; }
     Widget* recipient() const { return m_recipient; }
     bool fromFilter() const { return hasFlag(FromFilter); }
     void setFromFilter(const bool state) { setFlag(FromFilter, state); }
@@ -50,6 +54,7 @@ namespace ui {
     bool onlyCmdPressed() const { return m_modifiers == kKeyCmdModifier; }
     bool onlyWinPressed() const { return m_modifiers == kKeyWinModifier; }
 
+    void setDisplay(Display* display);
     void setRecipient(Widget* widget);
     void removeRecipient(Widget* widget);
 
@@ -72,9 +77,22 @@ namespace ui {
 
     MessageType m_type;       // Type of message
     int m_flags;              // Special flags for this message
+    Display* m_display;
     Widget* m_recipient;      // Recipient of this message
     Widget* m_commonAncestor; // Common ancestor between the Leave <-> Enter messages
     KeyModifiers m_modifiers; // Key modifiers pressed when message was created
+  };
+
+  class CallbackMessage : public Message {
+  public:
+    CallbackMessage(std::function<void()>&& callback)
+      : Message(kCallbackMessage)
+      , m_callback(std::move(callback)) { }
+    void call() {
+      m_callback();
+    }
+  private:
+    std::function<void()> m_callback;
   };
 
   class KeyMessage : public Message {
@@ -101,7 +119,9 @@ namespace ui {
   class PaintMessage : public Message {
   public:
     PaintMessage(int count, const gfx::Rect& rect)
-      : Message(kPaintMessage), m_count(count), m_rect(rect) {
+      : Message(kPaintMessage)
+      , m_count(count)
+      , m_rect(rect) {
     }
 
     int count() const { return m_count; }
@@ -133,11 +153,12 @@ namespace ui {
 
     // Copy other MouseMessage converting its type
     MouseMessage(MessageType type,
-                 const MouseMessage& other)
+                 const MouseMessage& other,
+                 const gfx::Point& newPosition)
       : Message(type, other.modifiers()),
         m_pointerType(other.pointerType()),
         m_button(other.button()),
-        m_pos(other.position()),
+        m_pos(newPosition),
         m_wheelDelta(other.wheelDelta()),
         m_preciseWheel(other.preciseWheel()),
         m_pressure(other.pressure()) {
@@ -153,6 +174,13 @@ namespace ui {
     float pressure() const { return m_pressure; }
 
     const gfx::Point& position() const { return m_pos; }
+
+    // Returns the mouse message position relative to the given
+    // "anotherDisplay" (the m_pos field is relative to m_display).
+    gfx::Point positionForDisplay(Display* anotherDisplay) const;
+
+    // Absolute position of this message on the screen.
+    gfx::Point screenPosition() const;
 
   private:
     PointerType m_pointerType;
@@ -172,6 +200,15 @@ namespace ui {
       : Message(type, modifiers),
         m_pos(pos),
         m_magnification(magnification) {
+    }
+
+    // Copy other TouchMessage converting its type
+    TouchMessage(MessageType type,
+                 const TouchMessage& other,
+                 const gfx::Point& newPosition)
+      : Message(type, other.modifiers()),
+        m_pos(newPosition),
+        m_magnification(other.magnification()) {
     }
 
     const gfx::Point& position() const { return m_pos; }

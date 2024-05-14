@@ -17,7 +17,6 @@
 #include "app/doc.h"
 #include "app/find_widget.h"
 #include "app/load_widget.h"
-#include "app/modules/editors.h"
 #include "app/pref/preferences.h"
 #include "app/tx.h"
 #include "app/ui/status_bar.h"
@@ -74,7 +73,7 @@ protected:
     const Mask* mask = doc->mask();
     gfx::Rect newGrid = mask->bounds();
 
-    Tx tx(writer.context(), friendlyName(), ModifyDocument);
+    Tx tx(writer, friendlyName(), ModifyDocument);
     tx(new cmd::SetGridBounds(writer.sprite(), newGrid));
     tx.commit();
 
@@ -126,7 +125,7 @@ void GridSettingsCommand::onExecute(Context* context)
     bounds.h = std::max(bounds.h, 1);
 
     ContextWriter writer(context);
-    Tx tx(context, friendlyName(), ModifyDocument);
+    Tx tx(writer, friendlyName(), ModifyDocument);
     tx(new cmd::SetGridBounds(site.sprite(), bounds));
     tx.commit();
 

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -21,6 +21,8 @@
 #include "app/ui/editor/editor_observers.h"
 #include "app/ui/editor/editor_state.h"
 #include "app/ui/editor/editor_states_history.h"
+#include "app/ui/tile_source.h"
+#include "app/util/tiled_mode.h"
 #include "doc/algorithm/flip_type.h"
 #include "doc/frame.h"
 #include "doc/image_buffer.h"
@@ -37,6 +39,7 @@
 #include "ui/timer.h"
 #include "ui/widget.h"
 
+#include <memory>
 #include <set>
 
 namespace doc {
@@ -59,9 +62,11 @@ namespace app {
   class EditorRender;
   class PixelsMovement;
   class Site;
+  class Transformation;
 
   namespace tools {
     class Ink;
+    class Pointer;
     class Tool;
   }
 
@@ -73,6 +78,7 @@ namespace app {
   class Editor : public ui::Widget,
                  public app::DocObserver,
                  public IColorSource,
+                 public ITileSource,
                  public tools::ActiveToolObserver {
   public:
     enum EditorFlags {
@@ -84,15 +90,13 @@ namespace app {
       kShowDecorators = 16,
       kShowSymmetryLine = 32,
       kShowSlices = 64,
-      kUseNonactiveLayersOpacityWhenEnabled = 128,
       kDefaultEditorFlags = (kShowGrid |
                              kShowMask |
                              kShowOnionskin |
                              kShowOutside |
                              kShowDecorators |
                              kShowSymmetryLine |
-                             kShowSlices |
-                             kUseNonactiveLayersOpacityWhenEnabled)
+                             kShowSlices)
     };
 
     enum class ZoomBehavior {
@@ -102,12 +106,16 @@ namespace app {
 
     static ui::WidgetType Type();
 
-    Editor(Doc* document, EditorFlags flags = kDefaultEditorFlags);
+    Editor(Doc* document,
+           EditorFlags flags = kDefaultEditorFlags,
+           EditorStatePtr state = nullptr);
     ~Editor();
 
+    static Editor* activeEditor() { return m_activeEditor; }
+    static void _setActiveEditor(Editor* editor) { m_activeEditor = editor; }
     static void destroyEditorSharedInternals();
 
-    bool isActive() const;
+    bool isActive() const { return (m_activeEditor == this); }
     bool isUsingNewRenderEngine() const;
 
     DocView* getDocView() { return m_docView; }
@@ -169,6 +177,11 @@ namespace app {
 
     void flashCurrentLayer();
 
+    // Convert ui::Display coordinates (pixel relative to the top-left
+    // corner of the in the display content bounds) from/to
+    // editor/sprite coordinates (pixel in the canvas).
+    //
+    // TODO we should rename these functions to displayToEditor() and editorToDisplay()
     gfx::Point screenToEditor(const gfx::Point& pt);
     gfx::Point screenToEditorCeiling(const gfx::Point& pt);
     gfx::PointF screenToEditorF(const gfx::Point& pt);
@@ -242,8 +255,8 @@ namespace app {
     void pasteImage(const Image* image, const Mask* mask = nullptr);
 
     void startSelectionTransformation(const gfx::Point& move, double angle);
-
     void startFlipTransformation(doc::algorithm::FlipType flipType);
+    void updateTransformation(const Transformation& transform);
 
     // Used by EditorView to notify changes in the view's scroll
     // position.
@@ -261,14 +274,13 @@ namespace app {
 
     // Animation control
     void play(const bool playOnce,
-              const bool playAll);
+              const bool playAll,
+              const bool playSubtags);
     void stop();
     bool isPlaying() const;
 
     // Shows a popup menu to change the editor animation speed.
-    void showAnimationSpeedMultiplierPopup(Option<bool>& playOnce,
-                                           Option<bool>& playAll,
-                                           const bool withStopBehaviorOptions);
+    void showAnimationSpeedMultiplierPopup();
     double getAnimationSpeedMultiplier() const;
     void setAnimationSpeedMultiplier(double speed);
 
@@ -285,12 +297,15 @@ namespace app {
     // IColorSource
     app::Color getColorByPosition(const gfx::Point& pos) override;
 
+    // ITileSource
+    doc::tile_t getTileByPosition(const gfx::Point& pos) override;
+
     void setTagFocusBand(int value) { m_tagFocusBand = value; }
     int tagFocusBand() const { return m_tagFocusBand; }
 
     // Returns true if the Shift key to draw straight lines with a
     // freehand tool is pressed.
-    bool startStraightLineWithFreehandTool(const ui::MouseMessage* msg);
+    bool startStraightLineWithFreehandTool(const tools::Pointer* pointer);
 
     // Functions to handle the set of selected slices.
     bool isSliceSelected(const doc::Slice* slice) const;
@@ -306,6 +321,11 @@ namespace app {
 
     // Properties to show information in the status bar
     bool showAutoCelGuides() const { return m_showAutoCelGuides; }
+
+    // Used in case an unhandled exception was caught when processing
+    // an Editor or EditorState event.
+    void showUnhandledException(const std::exception& ex,
+                                const ui::Message* msg);
 
     static void registerCommands();
 
@@ -331,6 +351,7 @@ namespace app {
     void onAddTag(DocEvent& ev) override;
     void onRemoveTag(DocEvent& ev) override;
     void onRemoveSlice(DocEvent& ev) override;
+    void onBeforeLayerVisibilityChange(DocEvent& ev, bool newState) override;
 
     // ActiveToolObserver impl
     void onActiveToolChange(tools::Tool* tool) override;
@@ -353,6 +374,7 @@ namespace app {
     void drawGrid(ui::Graphics* g, const gfx::Rect& spriteBounds, const gfx::Rect& gridBounds,
                   const app::Color& color, int alpha);
     void drawSlices(ui::Graphics* g);
+    void drawTileNumbers(ui::Graphics* g, const Cel* cel);
     void drawCelBounds(ui::Graphics* g, const Cel* cel, const gfx::Color color);
     void drawCelGuides(ui::Graphics* g, const Cel* cel, const Cel* mouseCel);
     void drawCelHGuide(ui::Graphics* g,
@@ -367,7 +389,7 @@ namespace app {
                        const int dottedY);
     gfx::Rect getCelScreenBounds(const Cel* cel);
 
-    void setCursor(const gfx::Point& mouseScreenPos);
+    void setCursor(const gfx::Point& mouseDisplayPos);
 
     // Draws the specified portion of sprite in the editor.  Warning:
     // You should setup the clip of the screen before calling this
@@ -376,8 +398,11 @@ namespace app {
 
     gfx::Point calcExtraPadding(const render::Projection& proj);
 
+    void invalidateCanvas();
     void invalidateIfActive();
     void updateAutoCelGuides(ui::Message* msg);
+
+    int otherLayersOpacity() const;
 
     // Stack of states. The top element in the stack is the current state (m_state).
     EditorStatesHistory m_statesHistory;
@@ -396,6 +421,8 @@ namespace app {
     frame_t m_frame;              // Active frame in the editor
     render::Projection m_proj;    // Zoom/pixel ratio in the editor
     DocumentPreferences& m_docPref;
+    // Helper functions affected by the current Tiled Mode.
+    app::TiledModeHelper m_tiledModeHelper;
 
     // Brush preview
     BrushPreview m_brushPreview;
@@ -427,11 +454,12 @@ namespace app {
 
     EditorCustomizationDelegate* m_customizationDelegate;
 
-    // TODO This field shouldn't be here. It should be removed when
-    // editors.cpp are finally replaced with a fully funtional Workspace
-    // widget.
     DocView* m_docView;
 
+    // Last known mouse position received by this editor when the
+    // mouse button was pressed. Used for auto-scrolling. To get the
+    // current mouse position on the editor you can use
+    // ui::Display::lastMousePos().
     gfx::Point m_oldPos;
 
     EditorFlags m_flags;
@@ -463,11 +491,14 @@ namespace app {
     // For slices
     doc::SelectedObjects m_selectedSlices;
 
+    // Active sprite editor with the keyboard focus.
+    static Editor* m_activeEditor;
+
     // The render engine must be shared between all editors so when a
     // DrawingState is being used in one editor, other editors for the
     // same document can show the same preview image/stroke being drawn
     // (search for Render::setPreviewImage()).
-    static EditorRender* m_renderEngine;
+    static std::unique_ptr<EditorRender> m_renderEngine;
   };
 
 } // namespace app

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2020-2022  Igara Studio S.A.
+// Copyright (C) 2020-2023  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -19,6 +19,7 @@
 #include "app/context_access.h"
 #include "app/doc.h"
 #include "app/file/palette_file.h"
+#include "app/i18n/strings.h"
 #include "app/modules/gfx.h"
 #include "app/modules/gui.h"
 #include "app/modules/palettes.h"
@@ -65,7 +66,7 @@ public:
     }
 
   private:
-    void onClick(Event& ev) override {
+    void onClick() override {
       m_colorPopup->setColorWithSignal(m_color, ChangeType);
     }
 
@@ -179,7 +180,7 @@ ColorPopup::ColorPopup(const ColorButtonOptions& options)
                    nullptr)
   , m_simpleColors(nullptr)
   , m_oldAndNew(Shade(2), ColorShades::ClickEntries)
-  , m_maskLabel("Transparent Color Selected")
+  , m_maskLabel(Strings::color_popup_transparent_color_sel())
   , m_canPin(options.canPinSelector)
   , m_insideChange(false)
   , m_disableHexUpdate(false)
@@ -187,6 +188,7 @@ ColorPopup::ColorPopup(const ColorButtonOptions& options)
   if (options.showSimpleColors) {
     if (!g_simplePal) {
       ResourceFinder rf;
+      rf.includeUserDir("palettes/tags.gpl");
       rf.includeDataDir("palettes/tags.gpl");
       if (rf.findFirst())
         g_simplePal = load_palette(rf.filename().c_str());
@@ -196,7 +198,7 @@ ColorPopup::ColorPopup(const ColorButtonOptions& options)
       m_simpleColors = new SimpleColors(this, &m_tooltips);
   }
 
-  ButtonSet::Item* item = m_colorType.addItem("Index");
+  ButtonSet::Item* item = m_colorType.addItem(Strings::color_popup_index());
   item->setFocusStop(false);
   if (!options.showIndexTab)
     item->setVisible(false);
@@ -373,16 +375,14 @@ void ColorPopup::onMakeFixed()
 
 void ColorPopup::onPaletteViewIndexChange(int index, ui::MouseButton button)
 {
-  base::ScopedValue<bool> restore(m_insideChange, true,
-                                  m_insideChange);
+  base::ScopedValue restore(m_insideChange, true);
 
   setColorWithSignal(app::Color::fromIndex(index), ChangeType);
 }
 
 void ColorPopup::onColorSlidersChange(ColorSlidersChangeEvent& ev)
 {
-  base::ScopedValue<bool> restore(m_insideChange, true,
-                                  m_insideChange);
+  base::ScopedValue restore(m_insideChange, true);
 
   setColorWithSignal(ev.color(), DontChangeType);
   findBestfitIndex(ev.color());
@@ -390,8 +390,7 @@ void ColorPopup::onColorSlidersChange(ColorSlidersChangeEvent& ev)
 
 void ColorPopup::onColorHexEntryChange(const app::Color& color)
 {
-  base::ScopedValue<bool> restore(m_insideChange, true,
-                                  m_insideChange);
+  base::ScopedValue restore(m_insideChange, true);
 
   // Disable updating the hex entry so we don't override what the user
   // is writting in the text field.
@@ -447,8 +446,7 @@ void ColorPopup::onSimpleColorClick()
 
 void ColorPopup::onColorTypeClick()
 {
-  base::ScopedValue<bool> restore(m_insideChange, true,
-                                  m_insideChange);
+  base::ScopedValue restore(m_insideChange, true);
 
   if (m_simpleColors)
     m_simpleColors->deselect();
@@ -491,8 +489,7 @@ void ColorPopup::onColorTypeClick()
 
 void ColorPopup::onPaletteChange()
 {
-  base::ScopedValue<bool> restore(m_insideChange, inEditMode(),
-                                  m_insideChange);
+  base::ScopedValue restore(m_insideChange, inEditMode());
 
   setColor(getColor(), DontChangeType);
   invalidate();

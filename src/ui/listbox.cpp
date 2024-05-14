@@ -12,6 +12,7 @@
 #include "ui/listbox.h"
 
 #include "base/fs.h"
+#include "ui/display.h"
 #include "ui/listitem.h"
 #include "ui/message.h"
 #include "ui/resize_event.h"
@@ -80,6 +81,7 @@ void ListBox::selectChild(Widget* item, Message* msg)
     // Save current state of all children when we start selecting
     if (msg == nullptr ||
         msg->type() == kMouseDownMessage ||
+        (msg->type() == kMouseMoveMessage && m_firstSelectedIndex < 0) ||
         msg->type() == kKeyDownMessage) {
       m_firstSelectedIndex = itemIndex;
       m_states.resize(children().size());
@@ -210,7 +212,8 @@ bool ListBox::onProcessMessage(Message* msg)
 
     case kMouseMoveMessage:
       if (hasCapture()) {
-        gfx::Point mousePos = static_cast<MouseMessage*>(msg)->position();
+        gfx::Point screenPos = msg->display()->nativeWindow()->pointToScreen(static_cast<MouseMessage*>(msg)->position());
+        gfx::Point mousePos = display()->nativeWindow()->pointFromScreen(screenPos);
         View* view = View::getView(this);
         bool pick_item = true;
 
@@ -243,18 +246,25 @@ bool ListBox::onProcessMessage(Message* msg)
             picked = pick(mousePos);
           }
 
-          // If the picked widget is a child of the list, select it
-          if (picked && hasChild(picked))
-            selectChild(picked, msg);
-        }
+          if (dynamic_cast<ui::Separator*>(picked))
+            picked = nullptr;
 
-        return true;
+          // If the picked widget has this list as an ancestor, select the item containing it.
+          if (picked && picked->hasAncestor(this)) {
+            ListItem *it = findParentListItem(picked);
+            selectChild(it, msg);
+          }
+        }
       }
-      break;
+      return true;
 
     case kMouseUpMessage:
-      releaseMouse();
-      break;
+      if (hasCapture()) {
+        releaseMouse();
+        m_firstSelectedIndex = -1;
+        m_lastSelectedIndex = -1;
+      }
+      return true;
 
     case kMouseWheelMessage: {
       View* view = View::getView(this);
@@ -453,6 +463,18 @@ int ListBox::advanceIndexThroughVisibleItems(
     }
   }
   return lastVisibleIndex;
+}
+
+ListItem* ListBox::findParentListItem(Widget* descendant)
+{
+  if (descendant->parent() == this)
+    return static_cast<ListItem*>(descendant);
+
+  for (Widget* widget=descendant->parent(); widget; widget=widget->parent()) {
+    return findParentListItem(widget);
+  }
+
+ return nullptr;
 }
 
 } // namespace ui

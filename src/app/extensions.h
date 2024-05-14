@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2020-2022  Igara Studio S.A.
+// Copyright (C) 2020-2023  Igara Studio S.A.
 // Copyright (C) 2017-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,6 +9,7 @@
 #define APP_EXTENSIONS_H_INCLUDED
 #pragma once
 
+#include "app/i18n/lang_info.h"
 #include "obs/signal.h"
 #include "render/dithering_matrix.h"
 
@@ -16,11 +17,15 @@
 #include <string>
 #include <vector>
 
+namespace ui {
+  class Widget;
+}
+
 namespace app {
 
-  // Key=theme/palette/etc. id
-  // Value=theme/palette/etc. path
-  typedef std::map<std::string, std::string> ExtensionItems;
+  // Key=id
+  // Value=path
+  using ExtensionItems = std::map<std::string, std::string>;
 
   class Extensions;
 
@@ -36,6 +41,7 @@ namespace app {
   class Extension {
     friend class Extensions;
   public:
+
     enum class Category {
       None,
       Keys,
@@ -64,6 +70,21 @@ namespace app {
       mutable bool m_loaded = false;
     };
 
+    struct ThemeInfo {
+      std::string path;
+      std::string variant;
+
+      ThemeInfo() = default;
+      ThemeInfo(const std::string& path,
+                const std::string& variant)
+        : path(path)
+        , variant(variant) { }
+    };
+
+    using Languages = std::map<std::string, LangInfo>;
+    using Themes = std::map<std::string, ThemeInfo>;
+    using DitheringMatrices = std::map<std::string, DitheringMatrixInfo>;
+
     Extension(const std::string& path,
               const std::string& name,
               const std::string& version,
@@ -82,13 +103,17 @@ namespace app {
     const Category category() const { return m_category; }
 
     const ExtensionItems& keys() const { return m_keys; }
-    const ExtensionItems& languages() const { return m_languages; }
-    const ExtensionItems& themes() const { return m_themes; }
+    const Languages& languages() const { return m_languages; }
+    const Themes& themes() const { return m_themes; }
     const ExtensionItems& palettes() const { return m_palettes; }
 
     void addKeys(const std::string& id, const std::string& path);
-    void addLanguage(const std::string& id, const std::string& path);
-    void addTheme(const std::string& id, const std::string& path);
+    void addLanguage(const std::string& id,
+                     const std::string& path,
+                     const std::string& displayName);
+    void addTheme(const std::string& id,
+                  const std::string& path,
+                  const std::string& variant);
     void addPalette(const std::string& id, const std::string& path);
     void addDitheringMatrix(const std::string& id,
                             const std::string& path,
@@ -96,6 +121,11 @@ namespace app {
 #ifdef ENABLE_SCRIPTING
     void addCommand(const std::string& id);
     void removeCommand(const std::string& id);
+
+    void addMenuGroup(const std::string& id);
+    void removeMenuGroup(const std::string& id);
+
+    void addMenuSeparator(ui::Widget* widget);
 #endif
 
     bool isEnabled() const { return m_isEnabled; }
@@ -113,12 +143,13 @@ namespace app {
     void addScript(const std::string& fn);
 #endif
 
+    bool isCurrentTheme() const;
+
   private:
     void enable(const bool state);
     void uninstall(const DeletePluginPref delPref);
     void uninstallFiles(const std::string& path,
                         const DeletePluginPref delPref);
-    bool isCurrentTheme() const;
     bool isDefaultTheme() const;
     void updateCategory(const Category newCategory);
 #ifdef ENABLE_SCRIPTING
@@ -127,10 +158,10 @@ namespace app {
 #endif
 
     ExtensionItems m_keys;
-    ExtensionItems m_languages;
-    ExtensionItems m_themes;
+    Languages m_languages;
+    Themes m_themes;
     ExtensionItems m_palettes;
-    std::map<std::string, DitheringMatrixInfo> m_ditheringMatrices;
+    DitheringMatrices m_ditheringMatrices;
 
 #ifdef ENABLE_SCRIPTING
     struct ScriptItem {
@@ -139,9 +170,10 @@ namespace app {
       ScriptItem(const std::string& fn);
     };
     struct PluginItem {
-      enum Type { Command };
+      enum Type { Command, MenuGroup, MenuSeparator };
       Type type;
       std::string id;
+      ui::Widget* widget = nullptr;
     };
     struct Plugin {
       int pluginRef;

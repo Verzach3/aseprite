@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -91,17 +91,27 @@ void DrawingState::initToolLoop(Editor* editor,
   else
     m_delayedMouseMove.initSpritePos(gfx::PointF(pointer.point()));
 
+  Tileset* tileset = m_toolLoop->getDstTileset();
+
+  // For selection inks we don't use a "the selected layer" for
+  // preview purposes, because we want the selection feedback to be at
+  // the top of all layers.
+  Layer* previewLayer = (m_toolLoop->getInk()->isSelection() ||
+                         m_toolLoop->getInk()->isSlice() ?
+                           nullptr : m_toolLoop->getLayer());
+
   // Prepare preview image (the destination image will be our preview
   // in the tool-loop time, so we can see what we are drawing)
   editor->renderEngine().setPreviewImage(
-    m_toolLoop->getLayer(),
+    previewLayer,
     m_toolLoop->getFrame(),
-    m_toolLoop->getDstImage(),
+    tileset ? nullptr: m_toolLoop->getDstImage(),
+    tileset,
     m_toolLoop->getCelOrigin(),
-    (m_toolLoop->getLayer() &&
-     m_toolLoop->getLayer()->isImage() ?
+    (previewLayer &&
+     previewLayer->isImage() ?
      static_cast<LayerImage*>(m_toolLoop->getLayer())->blendMode():
-     BlendMode::NEG_BW));
+     doc::BlendMode::NEG_BW)); // To preview the selection ink we use the negative black & white blender
 
   ASSERT(!m_toolLoopManager->isCanceled());
 
@@ -181,7 +191,7 @@ bool DrawingState::onMouseDown(Editor* editor, MouseMessage* msg)
   // checkStartDrawingStraightLine() with the right-button.
   if (recreateLoop && isCanceled) {
     ASSERT(!m_toolLoopManager);
-    checkStartDrawingStraightLine(editor, msg);
+    checkStartDrawingStraightLine(editor, msg, &pointer);
   }
 
   return true;
@@ -228,7 +238,7 @@ bool DrawingState::onMouseUp(Editor* editor, MouseMessage* msg)
   // button, if the Shift key is pressed, the whole ToolLoop starts
   // again.
   if (Preferences::instance().editor.straightLinePreview())
-    checkStartDrawingStraightLine(editor, msg);
+    checkStartDrawingStraightLine(editor, msg, &m_lastPointer);
 
   return true;
 }
@@ -243,11 +253,10 @@ bool DrawingState::onMouseMove(Editor* editor, MouseMessage* msg)
 
   // Don't process onScrollChange() messages if autoScroll() changes
   // the scroll.
-  base::ScopedValue<bool> disableScroll(m_processScrollChange,
-                                        false, m_processScrollChange);
+  base::ScopedValue disableScroll(m_processScrollChange, false);
 
   // Update velocity sensor.
-  m_velocity.updateWithScreenPoint(msg->position());
+  m_velocity.updateWithDisplayPoint(msg->position());
 
   // Update pointer with new mouse position
   m_lastPointer = tools::Pointer(gfx::Point(m_delayedMouseMove.spritePos()),
@@ -275,7 +284,8 @@ void DrawingState::onCommitMouseMove(Editor* editor,
                                      const gfx::PointF& spritePos)
 {
   if (m_toolLoop &&
-      !m_toolLoop->isCanceled()) {
+      m_toolLoopManager &&
+      !m_toolLoopManager->isCanceled()) {
     handleMouseMovement();
   }
 }
@@ -323,7 +333,7 @@ bool DrawingState::onKeyUp(Editor* editor, KeyMessage* msg)
       (m_type == DrawingType::LineFreehand &&
        !m_mousePressedReceived &&
        !editor->startStraightLineWithFreehandTool(nullptr))) {
-    m_toolLoop->cancel();
+    m_toolLoopManager->cancel();
   }
 
   // The user might have canceled the tool loop pressing the 'Esc' key.
@@ -334,10 +344,10 @@ bool DrawingState::onKeyUp(Editor* editor, KeyMessage* msg)
 bool DrawingState::onScrollChange(Editor* editor)
 {
   if (m_processScrollChange) {
-    gfx::Point mousePos = ui::get_mouse_position();
+    gfx::Point mousePos = editor->mousePosInDisplay();
 
     // Update velocity sensor.
-    m_velocity.updateWithScreenPoint(mousePos); // TODO add scroll as velocity?
+    m_velocity.updateWithDisplayPoint(mousePos); // TODO add scroll as velocity?
 
     m_lastPointer = tools::Pointer(editor->screenToEditor(mousePos),
                                    m_velocity.velocity(),
@@ -360,6 +370,16 @@ void DrawingState::onExposeSpritePixels(const gfx::Region& rgn)
 {
   if (m_toolLoop)
     m_toolLoop->validateDstImage(rgn);
+}
+
+bool DrawingState::getGridBounds(Editor* editor, gfx::Rect& gridBounds)
+{
+  if (m_toolLoop) {
+    gridBounds = m_toolLoop->getGridBounds();
+    return true;
+  }
+  else
+    return false;
 }
 
 void DrawingState::handleMouseMovement()
@@ -408,7 +428,7 @@ void DrawingState::onBeforeCommandExecution(CommandExecutionEvent& ev)
       ev.cancel();
     }
 
-    m_toolLoop->cancel();
+    m_toolLoopManager->cancel();
     destroyLoopIfCanceled(m_editor);
   }
 }
@@ -430,8 +450,8 @@ void DrawingState::destroyLoop(Editor* editor)
   if (editor)
     editor->renderEngine().removePreviewImage();
 
-  if (m_toolLoop)
-    m_toolLoop->commitOrRollback();
+  if (m_toolLoopManager)
+    m_toolLoopManager->end();
 
   m_toolLoopManager.reset(nullptr);
   m_toolLoop.reset(nullptr);

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2023  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -15,11 +15,12 @@
 #include "app/color_spaces.h"
 #include "app/color_utils.h"
 #include "app/console.h"
-#include "app/modules/editors.h"
 #include "app/modules/gui.h"
 #include "app/modules/palettes.h"
+#include "app/site.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/skin/skin_theme.h"
+#include "app/util/conversion_to_surface.h"
 #include "doc/blend_funcs.h"
 #include "doc/image.h"
 #include "doc/palette.h"
@@ -27,6 +28,7 @@
 #include "gfx/point.h"
 #include "gfx/rect.h"
 #include "os/surface.h"
+#include "os/system.h"
 #include "ui/intern.h"
 #include "ui/system.h"
 #include "ui/theme.h"
@@ -76,16 +78,18 @@ void draw_checkered_grid(ui::Graphics* g,
 
 gfx::Color grid_color1()
 {
-  if (ui::is_ui_thread() && current_editor)
-    return color_utils::color_for_ui(current_editor->docPref().bg.color1());
+  auto editor = Editor::activeEditor();
+  if (ui::is_ui_thread() && editor)
+    return color_utils::color_for_ui(editor->docPref().bg.color1());
   else
     return gfx::rgba(128, 128, 128);
 }
 
 gfx::Color grid_color2()
 {
-  if (ui::is_ui_thread() && current_editor)
-    return color_utils::color_for_ui(current_editor->docPref().bg.color2());
+  auto editor = Editor::activeEditor();
+  if (ui::is_ui_thread() && editor)
+    return color_utils::color_for_ui(editor->docPref().bg.color2());
   else
     return gfx::rgba(192, 192, 192);
 }
@@ -174,6 +178,127 @@ void draw_color_button(ui::Graphics* g,
                   rc.h-2*scale),
              color,
              colorMode);
+
+  // Draw opaque border
+  theme->drawRect(
+    g, rc,
+    theme->parts.colorbar0()->bitmapNW(),
+    theme->parts.colorbar0()->bitmapN(),
+    theme->parts.colorbar1()->bitmapNE(),
+    theme->parts.colorbar1()->bitmapE(),
+    theme->parts.colorbar3()->bitmapSE(),
+    theme->parts.colorbar2()->bitmapS(),
+    theme->parts.colorbar2()->bitmapSW(),
+    theme->parts.colorbar0()->bitmapW());
+
+  // Draw hot
+  if (hot) {
+    theme->drawRect(
+      g, gfx::Rect(rc.x, rc.y, rc.w, rc.h-1 - 1*scale),
+      theme->parts.colorbarSelection().get());
+  }
+}
+
+void draw_tile(ui::Graphics* g,
+               const Rect& rc,
+               const Site& site,
+               doc::tile_t tile)
+{
+  if (rc.w < 1 || rc.h < 1)
+    return;
+
+  draw_checkered_grid(g, rc, gfx::Size(rc.w/2, rc.h/2));
+
+  if (tile == doc::notile)
+    return;
+
+  const doc::Tileset* ts = site.tileset();
+  if (!ts)
+    return;
+
+  const doc::tile_index ti = doc::tile_geti(tile);
+  if (ti < 0 || ti >= ts->size())
+    return;
+
+  const doc::ImageRef tileImage = ts->get(ti);
+  if (!tileImage)
+    return;
+
+  const doc::tile_index tf = doc::tile_getf(tile);
+
+  int w = tileImage->width();
+  int h = tileImage->height();
+  os::SurfaceRef surface = os::instance()->makeRgbaSurface(w, h);
+  convert_image_to_surface(tileImage.get(), get_current_palette(),
+                           surface.get(), 0, 0, 0, 0, w, h);
+
+  ui::Paint paint;
+  paint.blendMode(os::BlendMode::SrcOver);
+
+  os::Sampling sampling;
+  if (w > rc.w && h > rc.h) {
+    sampling = os::Sampling(os::Sampling::Filter::Linear,
+                            os::Sampling::Mipmap::Nearest);
+  }
+
+  gfx::Matrix m;
+
+  if (tf & doc::tile_f_dflip) {
+    gfx::Matrix rot;
+    rot.setRotate(90.0f);
+    rot.postConcat(gfx::Matrix::MakeScale(-1.0f, 1.0f));
+    m.preConcat(rot);
+    std::swap(w, h);
+  }
+
+  if (tf & doc::tile_f_xflip) {
+    gfx::Matrix flip;
+    flip.setScale(-1.0f, 1.0f, w/float(2.0f), 0.0f);
+    m.postConcat(flip);
+  }
+
+  if (tf & doc::tile_f_yflip) {
+    gfx::Matrix flip;
+    flip.setScale(1.0f, -1.0f, 0.0f, h/float(2.0f));
+    m.postConcat(flip);
+  }
+
+  m.postConcat(gfx::Matrix::MakeScale(float(rc.w) / w,
+                                      float(rc.h) / h));
+
+  // TODO integrate getInternalDeltaX/Y translation in ui::Graphics
+  m.postConcat(gfx::Matrix::MakeTrans(rc.x+g->getInternalDeltaX(),
+                                      rc.y+g->getInternalDeltaY()));
+
+  g->save();
+  g->setMatrix(m);
+  g->drawRgbaSurface(surface.get(),
+                     -g->getInternalDeltaX(),
+                     -g->getInternalDeltaY());
+  g->restore();
+}
+
+void draw_tile_button(ui::Graphics* g,
+                      const gfx::Rect& rc,
+                      const Site& site,
+                      doc::tile_t tile,
+                      const bool hot,
+                      const bool drag)
+{
+  auto theme = SkinTheme::instance();
+  ASSERT(theme);
+  if (!theme)
+    return;
+
+  int scale = ui::guiscale();
+
+  // Draw background (the tile)
+  draw_tile(g,
+            Rect(rc.x+1*scale,
+                 rc.y+1*scale,
+                 rc.w-2*scale,
+                 rc.h-2*scale),
+            site, tile);
 
   // Draw opaque border
   theme->drawRect(

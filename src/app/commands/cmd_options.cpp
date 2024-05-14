@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -29,6 +29,7 @@
 #include "app/ui/color_button.h"
 #include "app/ui/main_window.h"
 #include "app/ui/pref_widget.h"
+#include "app/ui/rgbmap_algorithm_selector.h"
 #include "app/ui/sampling_selector.h"
 #include "app/ui/separator_in_view.h"
 #include "app/ui/skin/skin_theme.h"
@@ -114,11 +115,13 @@ class OptionsWindow : public app::gen::Options {
 
   class ThemeItem : public ListItem {
   public:
-    ThemeItem(const std::string& path,
-              const std::string& name)
-      : ListItem(name.empty() ? "-- " + path + " --": name),
+    ThemeItem(const std::string& id,
+              const std::string& path,
+              const std::string& displayName = std::string(),
+              const std::string& variant = std::string())
+      : ListItem(createLabel(path, id, displayName, variant)),
         m_path(path),
-        m_name(name) {
+        m_name(id) {
     }
 
     const std::string& themePath() const { return m_path; }
@@ -133,8 +136,45 @@ class OptionsWindow : public app::gen::Options {
     }
 
   private:
+    static std::string createLabel(const std::string& path,
+                                   const std::string& id,
+                                   const std::string& displayName,
+                                   const std::string& variant) {
+      if (displayName.empty()) {
+        if (id.empty())
+          return fmt::format("-- {} --", path);
+        else
+          return id;
+      }
+      else if (id == displayName) {
+        if (variant.empty())
+          return id;
+        else
+          return fmt::format("{} - {}", id, variant);
+      }
+      else {
+        if (variant.empty())
+          return displayName;
+        else
+          return fmt::format("{} - {}", displayName, variant);
+      }
+    }
+
     std::string m_path;
     std::string m_name;
+  };
+
+  class LangItem : public ListItem {
+  public:
+    LangItem(const LangInfo& langInfo)
+      : ListItem(langInfo.displayName)
+      , m_langInfo(langInfo) {
+    }
+    const std::string& langId() const {
+      return m_langInfo.id;
+    }
+  private:
+    LangInfo m_langInfo;
   };
 
   class ExtensionItem : public ListItem {
@@ -195,6 +235,25 @@ class OptionsWindow : public app::gen::Options {
     Extension* m_extension;
   };
 
+  class ThemeVariantItem : public ButtonSet::Item {
+  public:
+    ThemeVariantItem(OptionsWindow* options,
+                     const std::string& id,
+                     const std::string& variant)
+      : m_options(options)
+      , m_themeId(id) {
+      setText(variant);
+    }
+  private:
+    void onClick() override {
+      m_options->setUITheme(m_themeId,
+                            false,  // Don't adjust scale
+                            false); // Don't recreate variants
+    }
+    OptionsWindow* m_options;
+    std::string m_themeId;
+  };
+
 public:
   OptionsWindow(Context* context, int& curSection)
     : m_context(context)
@@ -208,6 +267,9 @@ public:
     , m_restoreUIScaling(m_pref.general.uiScale())
   {
     sectionListbox()->Change.connect([this]{ onChangeSection(); });
+
+    // Theme variants
+    fillThemeVariants();
 
     // Default extension to save files
     fillExtensionsCombobox(defaultExtension(), m_pref.saveFile.defaultExtension());
@@ -269,16 +331,18 @@ public:
     // Slices default color
     defaultSliceColor()->setColor(m_pref.slices.defaultColor());
 
-    // Others
+    // Timeline
     firstFrame()->setTextf("%d", m_globPref.timeline.firstFrame());
+    resetTimelineSel()->Click.connect([this]{ onResetTimelineSel(); });
 
+    // Others
     if (m_pref.general.expandMenubarOnMouseover())
       expandMenubarOnMouseover()->setSelected(true);
 
     if (m_pref.general.dataRecovery())
       enableDataRecovery()->setSelected(true);
     enableDataRecovery()->Click.connect(
-      [this](Event&){
+      [this](){
         const bool state = enableDataRecovery()->isSelected();
         keepEditedSpriteData()->setEnabled(state);
         keepEditedSpriteData()->setSelected(state);
@@ -352,11 +416,18 @@ public:
 
     onNativeCursorChange();
 
-    if (m_pref.experimental.useNativeClipboard())
-      nativeClipboard()->setSelected(true);
-
-    if (m_pref.experimental.useNativeFileDialog())
-      nativeFileDialog()->setSelected(true);
+    // "Show Aseprite file dialog" option is the inverse of the old
+    // experimental "use native file dialog" option
+    showAsepriteFileDialog()->setSelected(
+      !m_pref.experimental.useNativeFileDialog());
+    showAsepriteFileDialog()->Click.connect([this]{
+      nativeFileDialog()->setSelected(
+        !showAsepriteFileDialog()->isSelected());
+    });
+    nativeFileDialog()->Click.connect([this]{
+      showAsepriteFileDialog()->setSelected(
+        !nativeFileDialog()->isSelected());
+    });
 
 #ifdef _WIN32 // Show Tablet section on Windows
     {
@@ -378,13 +449,13 @@ public:
         loadWintabDriver2()->setSelected(false);
       }
 
-      tabletApiWindowsPointer()->Click.connect([this](Event&){ onTabletAPIChange(); });
-      tabletApiWintabSystem()->Click.connect([this](Event&){ onTabletAPIChange(); });
-      tabletApiWintabDirect()->Click.connect([this](Event&){ onTabletAPIChange(); });
+      tabletApiWindowsPointer()->Click.connect([this](){ onTabletAPIChange(); });
+      tabletApiWintabSystem()->Click.connect([this](){ onTabletAPIChange(); });
+      tabletApiWintabDirect()->Click.connect([this](){ onTabletAPIChange(); });
       loadWintabDriver()->Click.connect(
-        [this](Event&){ onLoadWintabChange(loadWintabDriver()->isSelected()); });
+        [this](){ onLoadWintabChange(loadWintabDriver()->isSelected()); });
       loadWintabDriver2()->Click.connect(
-        [this](Event&){ onLoadWintabChange(loadWintabDriver2()->isSelected()); });
+        [this](){ onLoadWintabChange(loadWintabDriver2()->isSelected()); });
     }
 #else  // For macOS and Linux
     {
@@ -406,6 +477,10 @@ public:
 
     nonactiveLayersOpacity()->setValue(m_pref.experimental.nonactiveLayersOpacity());
 
+    rgbmapAlgorithmPlaceholder()->addChild(&m_rgbmapAlgorithmSelector);
+    m_rgbmapAlgorithmSelector.setExpansive(true);
+    m_rgbmapAlgorithmSelector.algorithm(m_pref.quantization.rgbmapAlgorithm());
+
     if (m_pref.editor.showScrollbars())
       showScrollbars()->setSelected(true);
 
@@ -419,22 +494,33 @@ public:
       discardBrush()->setSelected(true);
 
     // Scope
-    bgScope()->addItem("Background for New Documents");
-    gridScope()->addItem("Grid for New Documents");
+    bgScope()->addItem(Strings::options_bg_for_new_docs());
+    gridScope()->addItem(Strings::options_grid_for_new_docs());
     if (context->activeDocument()) {
-      bgScope()->addItem("Background for the Active Document");
+      bgScope()->addItem(Strings::options_bg_for_active_doc());
       bgScope()->setSelectedItemIndex(1);
       bgScope()->Change.connect([this]{ onChangeBgScope(); });
 
-      gridScope()->addItem("Grid for the Active Document");
+      gridScope()->addItem(Strings::options_grid_for_active_doc());
       gridScope()->setSelectedItemIndex(1);
       gridScope()->Change.connect([this]{ onChangeGridScope(); });
     }
 
+    // Update the one/multiple window buttonset (and keep in on sync
+    // with the old/experimental checkbox)
+    uiWindows()->setSelectedItem(multipleWindows()->isSelected() ? 1: 0);
+    uiWindows()->ItemChange.connect([this]() {
+      multipleWindows()->setSelected(uiWindows()->selectedItem() == 1);
+    });
+    multipleWindows()->Click.connect([this](){
+      uiWindows()->setSelectedItem(multipleWindows()->isSelected() ? 1: 0);
+    });
+
+    // Scaling
     selectScalingItems();
 
-#ifdef _DEBUG // TODO enable this on Release when Aseprite supports
-              //      GPU-acceleration properly
+#ifdef ENABLE_DEVMODE // TODO enable this on Release when Aseprite supports
+                      //      GPU-acceleration properly
     if (os::instance()->hasCapability(os::Capabilities::GpuAccelerationSwitch)) {
       gpuAcceleration()->setSelected(m_pref.general.gpuAcceleration());
     }
@@ -473,13 +559,13 @@ public:
     static_assert(int(app::gen::RightClickMode::LASSO) == 5, "");
     static_assert(int(app::gen::RightClickMode::SELECT_LAYER_AND_MOVE) == 6, "");
 
-    rightClickBehavior()->addItem("Paint with background color");
-    rightClickBehavior()->addItem("Pick foreground color");
-    rightClickBehavior()->addItem("Erase");
-    rightClickBehavior()->addItem("Scroll");
-    rightClickBehavior()->addItem("Rectangular Marquee");
-    rightClickBehavior()->addItem("Lasso");
-    rightClickBehavior()->addItem("Select Layer & Move");
+    rightClickBehavior()->addItem(Strings::options_right_click_paint_bgcolor());
+    rightClickBehavior()->addItem(Strings::options_right_click_pick_fgcolor());
+    rightClickBehavior()->addItem(Strings::options_right_click_erase());
+    rightClickBehavior()->addItem(Strings::options_right_click_scroll());
+    rightClickBehavior()->addItem(Strings::options_right_click_rectangular_marquee());
+    rightClickBehavior()->addItem(Strings::options_right_click_lasso());
+    rightClickBehavior()->addItem(Strings::options_right_click_select_layer_and_move());
     rightClickBehavior()->setSelectedItemIndex((int)m_pref.editor.rightClickMode());
 
 #ifndef __APPLE__ // Zoom sliding two fingers option only on macOS
@@ -495,7 +581,7 @@ public:
     checkeredBgSize()->addItem("4x4");
     checkeredBgSize()->addItem("2x2");
     checkeredBgSize()->addItem("1x1");
-    checkeredBgSize()->addItem("Custom");
+    checkeredBgSize()->addItem(Strings::options_bg_custom_size());
     checkeredBgSize()->Change.connect([this]{ onCheckeredBgSizeChange(); });
 
     // Reset buttons
@@ -577,8 +663,9 @@ public:
 #endif
 
     // Update language
-    Strings::instance()->setCurrentLanguage(
-      language()->getItemText(language()->getSelectedItemIndex()));
+    if (auto item = dynamic_cast<const LangItem*>(language()->getSelectedItem())) {
+      Strings::instance()->setCurrentLanguage(item->langId());
+    }
 
     m_globPref.timeline.firstFrame(firstFrame()->textInt());
     m_pref.general.showFullPath(showFullPath()->isSelected());
@@ -689,12 +776,23 @@ public:
     }
     update_windows_color_profile_from_preferences();
 
+    m_pref.range.alpha(static_cast<app::gen::AlphaRange>(alpha()->getSelectedItemIndex()));
+    m_pref.range.opacity(static_cast<app::gen::AlphaRange>(opacity()->getSelectedItemIndex()));
+
     // Change sprite grid bounds
-    if (m_context && m_context->activeDocument()) {
-      ContextWriter writer(m_context);
-      Tx tx(m_context, Strings::commands_GridSettings(), ModifyDocument);
-      tx(new cmd::SetGridBounds(writer.sprite(), gridBounds()));
-      tx.commit();
+    if (m_context &&
+        m_context->activeDocument() &&
+        m_context->activeDocument()->sprite() &&
+        m_context->activeDocument()->sprite()->gridBounds() != gridBounds()) {
+      try {
+        ContextWriter writer(m_context, 1000);
+        Tx tx(writer, Strings::commands_GridSettings(), ModifyDocument);
+        tx(new cmd::SetGridBounds(writer.sprite(), gridBounds()));
+        tx.commit();
+      }
+      catch (const std::exception& ex) {
+        Console::showException(ex);
+      }
     }
 
     m_curPref->show.grid(gridVisible()->isSelected());
@@ -730,10 +828,9 @@ public:
     m_pref.undo.allowNonlinearHistory(undoAllowNonlinearHistory()->isSelected());
 
     // Experimental features
-    m_pref.experimental.useNativeClipboard(nativeClipboard()->isSelected());
-    m_pref.experimental.useNativeFileDialog(nativeFileDialog()->isSelected());
     m_pref.experimental.flashLayer(flashLayer()->isSelected());
     m_pref.experimental.nonactiveLayersOpacity(nonactiveLayersOpacity()->getValue());
+    m_pref.quantization.rgbmapAlgorithm(m_rgbmapAlgorithmSelector.algorithm());
 
 #ifdef _WIN32
     {
@@ -759,7 +856,7 @@ public:
       m_pref.tablet.api(tabletStr);
       m_pref.experimental.loadWintabDriver(wintabState);
 
-      manager()->display()
+      manager()->display()->nativeWindow()
         ->setInterpretOneFingerGestureAsMouseMovement(
           oneFingerAsMouseMovement()->isSelected());
 
@@ -808,6 +905,10 @@ public:
                     warnings));
     }
 
+    // Probably it's safe to switch this flag in runtime
+    if (m_pref.experimental.multipleWindows() != ui::get_multiple_displays())
+      ui::set_multiple_displays(m_pref.experimental.multipleWindows());
+
     if (reset_screen)
       updateScreenScaling();
   }
@@ -849,6 +950,44 @@ public:
   }
 
 private:
+
+  void fillThemeVariants() {
+    ButtonSet* list = nullptr;
+    for (Extension* ext : App::instance()->extensions()) {
+      if (ext->isCurrentTheme()) {
+        // Number of variants
+        int c = 0;
+        for (auto it : ext->themes()) {
+          if (!it.second.variant.empty())
+            ++c;
+        }
+
+        if (c >= 2) {
+          list = new ButtonSet(c);
+          for (auto it : ext->themes()) {
+            if (!it.second.variant.empty()) {
+              auto item = list->addItem(
+                new ThemeVariantItem(this, it.first, it.second.variant));
+
+              if (it.first == Preferences::instance().theme.selected())
+                list->setSelectedItem(item, false);
+            }
+          }
+        }
+        break;
+      }
+    }
+    if (list) {
+      themeVariants()->addChild(list);
+    }
+    if (m_themeVars) {
+      themeVariants()->removeChild(m_themeVars);
+      m_themeVars->deferDelete();
+    }
+    m_themeVars = list;
+    themeVariants()->setVisible(list ? true: false);
+    themeVariants()->initTheme();
+  }
 
   void fillExtensionsCombobox(ui::ComboBox* combobox,
                               const std::string& defExt) {
@@ -942,6 +1081,9 @@ private:
     filesWithCs()->setEnabled(state);
     missingCsLabel()->setEnabled(state);
     missingCs()->setEnabled(state);
+
+    alpha()->setSelectedItemIndex(static_cast<int>(m_pref.range.alpha()));
+    opacity()->setSelectedItemIndex(static_cast<int>(m_pref.range.opacity()));
   }
 
   void onResetColorManagement() {
@@ -1175,11 +1317,23 @@ private:
     if (language()->getItemCount() > 0)
       return;
 
+    // Check if the current language exists, in other case select English.
     Strings* strings = Strings::instance();
     std::string curLang = strings->currentLanguage();
-    for (const std::string& lang : strings->availableLanguages()) {
-      int i = language()->addItem(lang);
-      if (lang == curLang)
+    bool found = false;
+    for (const LangInfo& lang : strings->availableLanguages()) {
+      if (lang.id == curLang) {
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      curLang = Strings::kDefLanguage;
+
+    // Select current language by lang ID
+    for (const LangInfo& lang : strings->availableLanguages()) {
+      int i = language()->addItem(new LangItem(lang));
+      if (lang.id == curLang)
         language()->setSelectedItemIndex(i);
     }
   }
@@ -1224,7 +1378,7 @@ private:
             new SeparatorInView(base::normalize_path(path), HORIZONTAL));
         }
 
-        ThemeItem* item = new ThemeItem(fullPath, fn);
+        ThemeItem* item = new ThemeItem(fn, fullPath);
         themeList()->addChild(item);
 
         // Selected theme
@@ -1245,15 +1399,18 @@ private:
       if (first) {
         first = false;
         themeList()->addChild(
-          new SeparatorInView("Extension Themes", HORIZONTAL));
+          new SeparatorInView(Strings::options_extension_themes(), HORIZONTAL));
       }
 
       for (auto it : ext->themes()) {
-        ThemeItem* item = new ThemeItem(it.second, it.first);
+        ThemeItem* item = new ThemeItem(it.first,
+                                        it.second.path,
+                                        ext->displayName(),
+                                        it.second.variant);
         themeList()->addChild(item);
 
         // Selected theme
-        if (it.second == selectedPath)
+        if (it.second.path == selectedPath)
           themeList()->selectChild(item);
       }
     }
@@ -1328,7 +1485,8 @@ private:
   }
 
   void setUITheme(const std::string& themeName,
-                  const bool updateScaling) {
+                  const bool updateScaling,
+                  const bool recreateVariantsFields = true) {
     try {
       if (themeName != m_pref.theme.selected()) {
         auto theme = skin::SkinTheme::get(this);
@@ -1375,6 +1533,9 @@ private:
             selectScalingItems();
           }
         }
+
+        if (recreateVariantsFields)
+          fillThemeVariants();
       }
     }
     catch (const std::exception& ex) {
@@ -1566,6 +1727,14 @@ private:
     layout();
   }
 
+  void onResetTimelineSel() {
+    keepSelection()->setSelected(m_pref.timeline.keepSelection.defaultValue());
+    selectOnClick()->setSelected(m_pref.timeline.selectOnClick.defaultValue());
+    selectOnClickWithKey()->setSelected(m_pref.timeline.selectOnClickWithKey.defaultValue());
+    selectOnDrag()->setSelected(m_pref.timeline.selectOnDrag.defaultValue());
+    dragAndDropFromEdges()->setSelected(m_pref.timeline.dragAndDropFromEdges.defaultValue());
+  }
+
   gfx::Rect gridBounds() const {
     return gfx::Rect(gridX()->textInt(), gridY()->textInt(),
                      gridW()->textInt(), gridH()->textInt());
@@ -1649,6 +1818,8 @@ private:
   int m_restoreUIScaling;
   std::vector<os::ColorSpaceRef> m_colorSpaces;
   std::string m_templateTextForDisplayCS;
+  RgbMapAlgorithmSelector m_rgbmapAlgorithmSelector;
+  ButtonSet* m_themeVars = nullptr;
   SamplingSelector* m_samplingSelector = nullptr;
 };
 
@@ -1683,12 +1854,20 @@ void OptionsCommand::onExecute(Context* context)
   static int curSection = 0;
 
   OptionsWindow window(context, curSection);
-  window.openWindow();
 
-  if (!m_installExtensionFilename.empty()) {
-    if (!window.showDialogToInstallExtension(m_installExtensionFilename))
-      return;
-  }
+  // As showDialogToInstallExtension() will show an ui::Alert, we need
+  // to call this function after window.openWindowInForeground(), so
+  // the parent window of the alert will be our OptionsWindow (and not
+  // the main window).
+  window.Open.connect(
+    [&]() {
+      if (!m_installExtensionFilename.empty()) {
+        if (!window.showDialogToInstallExtension(this->m_installExtensionFilename)) {
+          window.closeWindow(&window);
+          return;
+        }
+      }
+    });
 
   window.openWindowInForeground();
   if (window.ok())

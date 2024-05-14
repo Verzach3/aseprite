@@ -1,5 +1,5 @@
 # Aseprite UI Library
-# Copyright (C) 2022  Igara Studio S.A.
+# Copyright (C) 2019-2022  Igara Studio S.A.
 # Copyright (C) 2001-2018  David Capello
 
 if(WIN32)
@@ -15,6 +15,7 @@ add_library(ui-lib
   combobox.cpp
   component.cpp
   cursor.cpp
+  display.cpp
   entry.cpp
   event.cpp
   fit_bounds.cpp
@@ -34,6 +35,7 @@ add_library(ui-lib
   move_region.cpp
   overlay.cpp
   overlay_manager.cpp
+  paint.cpp
   paint_event.cpp
   panel.cpp
   popup_window.cpp

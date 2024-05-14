@@ -42,7 +42,6 @@ AppMenuItem::AppMenuItem(const std::string& text,
  , m_key(nullptr)
  , m_commandId(commandId)
  , m_params(params)
- , m_isRecentFileItem(false)
  , m_native(nullptr)
 {
 }
@@ -96,8 +95,12 @@ bool AppMenuItem::onProcessMessage(Message* msg)
   switch (msg->type()) {
 
     case kCloseMessage:
-      // disable the menu (the keyboard shortcuts are processed by "manager_msg_proc")
-      setEnabled(false);
+      // Don't disable items with submenus
+      if (!hasSubmenu()) {
+        // Disable the menu item (the keyboard shortcuts are processed
+        // by "manager_msg_proc")
+        setEnabled(false);
+      }
       break;
   }
 

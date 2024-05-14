@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2019-2022  Igara Studio S.A.
+// Copyright (C) 2019-2023  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -145,11 +145,23 @@ app::Color Color_new(lua_State* L, int index)
     }
     else
       lua_pop(L, 1);
+
+    // Convert { tile } into a Color
+    if (lua_getfield(L, index, "tile") != LUA_TNIL) {
+      tile_t t = lua_tointeger(L, -1);
+      color = app::Color::fromTile(t);
+      lua_pop(L, 1);
+      return color;
+    }
+    else
+      lua_pop(L, 1);
   }
   // raw color into app color
   else if (!lua_isnone(L, index)) {
     if (lua_isinteger(L, index) && (index < 0 || lua_isnone(L, index+1))) {
       doc::color_t docColor = lua_tointeger(L, index);
+
+      // TODO depending on current pixel format?
       switch (app_get_current_pixel_format()) {
         case IMAGE_RGB:
           color = app::Color::fromRgb(doc::rgba_getr(docColor),

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2019-2022  Igara Studio S.A.
+// Copyright (C) 2019-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -25,6 +25,7 @@
 #include "app/ui/workspace.h"
 #include "app/ui/workspace_tabs.h"
 #include "app/ui_context.h"
+#include "app/util/clipboard.h"
 #include "base/exception.h"
 #include "fmt/format.h"
 #include "ui/label.h"
@@ -40,6 +41,11 @@
 
 #if ENABLE_SENTRY
 #include "app/sentry_wrapper.h"
+#endif
+
+#ifdef ENABLE_DRM
+#include "drm/drm.h"
+#include "aseprite_update.h"
 #endif
 
 namespace app {
@@ -110,6 +116,13 @@ HomeView::~HomeView()
 void HomeView::dataRecoverySessionsAreReady()
 {
 #ifdef ENABLE_DATA_RECOVERY
+
+#ifdef ENABLE_TRIAL_MODE
+  DRM_INVALID{
+    return;
+  }
+#endif
+
   if (App::instance()->dataRecovery()->hasRecoverySessions()) {
     // We highlight the "Recover Files" options because we came from a crash
     auto theme = SkinTheme::get(this);
@@ -147,6 +160,11 @@ TabIcon HomeView::getTabIcon()
   return TabIcon::HOME;
 }
 
+gfx::Color HomeView::getTabColor()
+{
+  return gfx::ColorNone;
+}
+
 bool HomeView::onCloseView(Workspace* workspace, bool quitting)
 {
   workspace->removeView(this);
@@ -167,12 +185,77 @@ void HomeView::onTabPopup(Workspace* workspace)
   if (!menu)
     return;
 
-  menu->showPopup(ui::get_mouse_position());
+  menu->showPopup(mousePosInDisplay(), display());
 }
 
 void HomeView::onWorkspaceViewSelected()
 {
   StatusBar::instance()->showDefaultText();
+}
+
+
+void HomeView::onNewInputPriority(InputChainElement* element,
+                                 const ui::Message* msg)
+{
+  // Do nothing
+}
+
+bool HomeView::onCanCut(Context* ctx)
+{
+  return false;
+}
+
+bool HomeView::onCanCopy(Context* ctx)
+{
+  return false;
+}
+
+bool HomeView::onCanPaste(Context* ctx)
+{
+  return (ctx->clipboard()->format() == ClipboardFormat::Image);
+}
+
+bool HomeView::onCanClear(Context* ctx)
+{
+  return false;
+}
+
+bool HomeView::onCut(Context* ctx)
+{
+  return false;
+}
+
+bool HomeView::onCopy(Context* ctx)
+{
+  return false;
+}
+
+bool HomeView::onPaste(Context* ctx)
+{
+  auto clipboard = ctx->clipboard();
+  if (clipboard->format() == ClipboardFormat::Image) {
+    // Create new sprite from the clipboard image.
+    Params params;
+    params.set("ui", "false");
+    params.set("fromClipboard", "true");
+    ctx->executeCommand(
+      Commands::instance()->byId(CommandId::NewFile()),
+      params);
+    return true;
+  }
+  else
+    return false;
+}
+
+bool HomeView::onClear(Context* ctx)
+{
+  // Do nothing
+  return false;
+}
+
+void HomeView::onCancel(Context* ctx)
+{
+  // Do nothing
 }
 
 void HomeView::onNewFile()
@@ -222,7 +305,20 @@ void HomeView::onNewUpdate(const std::string& url, const std::string& version)
   checkUpdate()->setText(
     fmt::format(Strings::home_view_new_version_available(),
                 get_app_name(), version));
+#ifdef ENABLE_DRM
+  DRM_INVALID {
+    checkUpdate()->setUrl(url);
+  }
+  else {
+    checkUpdate()->setUrl("");
+    checkUpdate()->Click.connect([version] {
+      app::AsepriteUpdate dlg(version);
+      dlg.openWindowInForeground();
+    });
+  }
+#else
   checkUpdate()->setUrl(url);
+#endif
   checkUpdate()->setVisible(true);
   checkUpdate()->InitTheme.connect(
     [this]{
@@ -239,6 +335,13 @@ void HomeView::onNewUpdate(const std::string& url, const std::string& version)
 void HomeView::onRecoverSprites()
 {
 #ifdef ENABLE_DATA_RECOVERY
+
+#ifdef ENABLE_TRIAL_MODE
+  DRM_INVALID{
+    return;
+  }
+#endif
+
   ASSERT(m_dataRecovery); // "Recover Files" button is hidden when
                           // data recovery is disabled (m_dataRecovery == nullptr)
   if (!m_dataRecovery)

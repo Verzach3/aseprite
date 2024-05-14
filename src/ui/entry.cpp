@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2018-2022  Igara Studio S.A.
+// Copyright (C) 2018-2023  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -15,7 +15,7 @@
 #include "os/draw_text.h"
 #include "os/font.h"
 #include "os/system.h"
-#include "ui/manager.h"
+#include "ui/display.h"
 #include "ui/menu.h"
 #include "ui/message.h"
 #include "ui/scale.h"
@@ -60,7 +60,7 @@ Entry::Entry(const int maxsize, const char* format, ...)
   if (format) {
     va_list ap;
     va_start(ap, format);
-    vsprintf(buf, format, ap);
+    std::vsnprintf(buf, sizeof(buf), format, ap);
     va_end(ap);
   }
   // empty string
@@ -195,8 +195,8 @@ Entry::Range Entry::selectedRange() const
     range.from = std::min(m_caret, m_select);
     range.to   = std::max(m_caret, m_select);
 
-    ASSERT(range.from >= 0 && range.from < int(m_boxes.size()));
-    ASSERT(range.to   >= 0 && range.to   <= int(m_boxes.size()));
+    range.from = std::clamp(range.from, 0, std::max(0, int(m_boxes.size())-1));
+    range.to = std::clamp(range.to, 0, int(m_boxes.size()));
   }
   return range;
 }
@@ -463,6 +463,9 @@ bool Entry::onProcessMessage(Message* msg)
       return true;
 
     case kDoubleClickMessage:
+      if (!hasFocus())
+        requestFocus();
+
       m_selecting_words = wordRange(m_caret);
       selectText(m_selecting_words.from, m_selecting_words.to);
 
@@ -490,7 +493,7 @@ gfx::Size Entry::sizeHintWithText(Entry* entry,
     + 2*entry->theme()->getEntryCaretSize(entry).w
     + entry->border().width();
 
-  w = std::min(w, ui::display_w()/2);
+  w = std::min(w, entry->display()->workareaSizeUIScale().w/2);
 
   int h =
     + entry->font()->height()
@@ -509,7 +512,7 @@ void Entry::onSizeHint(SizeHintEvent& ev)
     + trailing
     + border().width();
 
-  w = std::min(w, ui::display_w()/2);
+  w = std::min(w, display()->workareaSizeUIScale().w/2);
 
   int h =
     + font()->height()
@@ -542,7 +545,7 @@ gfx::Rect Entry::onGetEntryTextBounds() const
 {
   gfx::Rect bounds = clientBounds();
   bounds.x += border().left();
-  bounds.y += bounds.h/2 - textHeight()/2;
+  bounds.y += CALC_FOR_CENTER(0, bounds.h, textHeight());
   bounds.w -= border().width();
   bounds.h = textHeight();
   return bounds;
@@ -880,7 +883,7 @@ void Entry::showEditPopupMenu(const gfx::Point& pt)
     paste.setEnabled(false);
   }
 
-  menu.showPopup(pt);
+  menu.showPopup(pt, display());
 }
 
 class Entry::CalcBoxesTextDelegate : public os::DrawTextDelegate {

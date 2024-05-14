@@ -28,14 +28,18 @@ namespace app {
 
     std::string outputFilenameValue() const;
     double resizeValue() const;
+    std::string areaValue() const;
     std::string layersValue() const;
+    int layersIndex() const;
     std::string framesValue() const;
     doc::AniDir aniDirValue() const;
+    bool isPlaySubtags() const;
     bool applyPixelRatio() const;
     bool isForTwitter() const;
 
     void setOutputFilename(const std::string& pathAndFilename);
     void setResizeScale(const double scale);
+    void setArea(const std::string& area);
     void setAniDir(const doc::AniDir aniDir);
 
     obs::signal<std::string()> SelectOutputFile;
@@ -44,6 +48,7 @@ namespace app {
     void updateOutputFilenameEntry();
     void onOutputFilenameEntryChange();
     void updateAniDir();
+    void updatePlaySubtags();
     void updateAdjustResizeButton();
     void onAdjustResize();
     void onOK();
